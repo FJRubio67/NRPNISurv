@@ -9,10 +9,10 @@ This repository contains real data applications and R code for the analysis of n
 
 Two real-data examples that illustrate the use of the proposed methodology for detecting near-redundancy and practical non-identifiability of parameters can be found at:
 
-[Near Redundancy and Practical non-identifiability: Leukemia data](https://rpubs.com/FJRubio/NRPNILeuk)
+- [Near Redundancy and Practical non-identifiability: Leukemia data](https://rpubs.com/FJRubio/NRPNILeuk)
 
 
-[Near Redundancy and Practical non-identifiability: Lung cancer data](https://rpubs.com/FJRubio/NRPNILung)
+- [Near Redundancy and Practical non-identifiability: Lung cancer data](https://rpubs.com/FJRubio/NRPNILung)
 
 
 See also: [HazReg](https://github.com/FJRubio67/HazReg)
