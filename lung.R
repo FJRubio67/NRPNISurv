@@ -1,0 +1,367 @@
+## ----------------------------------------------------------------------------------------------------------------------------
+########################################################################
+# Case study I: Lung cancer data set from the survival R package
+########################################################################
+
+# See README file for more information
+
+rm(list=ls())
+
+# Routines
+# https://github.com/FJRubio67/NRPNISurv
+source("routines.R")
+
+# Required packages (from CRAN)
+# install.packages('PackageName')
+library(knitr)
+library(numDeriv)
+library(survival)
+library(flexsurv)
+
+# Required packages (from GitHub)
+#library(devtools)
+#install_github("FJRubio67/HazReg")
+library(HazReg)
+
+#----------------------------------------------------------------------------------------------
+# Lung cancer data
+#---------------------------------------------------------------------------------------------
+
+# data set
+attach(lung)
+head(lung)
+
+#******************
+# Data preparation
+#******************
+
+# Removing a missing observation
+dat <- lung[-14,]
+
+# design matrix (hazard scale)
+x <- as.matrix( cbind(scale(dat$age), dat$sex - 1, scale(dat$ph.ecog) ))
+
+# sample size
+n <- nrow(x)
+
+# design matrix (time scale)
+xt <- as.matrix(x[,1])
+
+# vital status
+status <- dat$status - 1
+
+# Survival times
+times <- dat$time/365.25
+
+times  <- ifelse(times==0,1/365.25,times)
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+#----------------------------------------------------------------------------------------------
+# Maximum likelihood estimation
+# See : https://github.com/FJRubio67/HazReg
+#----------------------------------------------------------------------------------------------
+
+# PGW model with no covariates
+OPTPGW0 <- GHMLE(init = c(0,0,0), times = times, status = status, 
+               hstr = "baseline", dist = "PGW", method = "nlminb", maxit = 10000)
+
+# PGW-PH model
+OPTPGWPH <- GHMLE(init = c(OPTPGW0$OPT$par*0, rep(0,ncol(x))), times = times, status = status, 
+           hstr = "PH", dist = "PGW", des = x, method = "nlminb", maxit = 10000)
+
+# PGW-AFT model
+OPTPGWAFT <- GHMLE(init = c(OPTPGW0$OPT$par,rep(0,ncol(x))), times = times, status = status, 
+         hstr = "AFT", dist = "PGW", des = x, method = "nlminb", maxit = 10000)
+
+# PGW-GH model
+OPTPGWGH <- GHMLE(init = c(OPTPGW0$OPT$par, rep(0, ncol(xt)), rep(0,ncol(x))), times = times, status = status,                 
+          hstr = "GH", dist = "PGW", des = x, des_t = xt, method = "nlminb", maxit = 10000)
+
+# MLE PGW no covariates
+MLE.PGW0 <- exp(OPTPGW0$OPT$par[1:3])
+kable(MLE.PGW0, digits = 3)
+
+# MLE PGW-PH structure
+MLE.PGWPH <- c(exp(OPTPGWPH$OPT$par[1:3]), OPTPGWPH$OPT$par[-c(1:3)])
+kable(MLE.PGWPH, digits = 3)
+
+# MLE PGW-AFT structure
+MLE.PGWAFT <- c(exp(OPTPGWAFT$OPT$par[1:3]), OPTPGWAFT$OPT$par[-c(1:3)])
+kable(MLE.PGWAFT, digits = 3)
+
+# MLE PGW-GH structure
+MLE.PGWGH <- c(exp(OPTPGWGH$OPT$par[1:3]), OPTPGWGH$OPT$par[-c(1:3)])
+kable(MLE.PGWGH, digits = 3)
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+# AIC
+AIC.PGW0 <- 2*OPTPGW0$OPT$objective + 2*length(MLE.PGW0)
+AIC.PGWGH <- 2*OPTPGWGH$OPT$objective + 2*length(MLE.PGWGH)
+AIC.PGWAFT <- 2*OPTPGWAFT$OPT$objective + 2*length(MLE.PGWAFT)
+AIC.PGWPH <- 2*OPTPGWPH$OPT$objective + 2*length(MLE.PGWPH)
+
+# Best model: PGW-PH
+AICs <- c(AIC.PGW0, AIC.PGWPH, AIC.PGWAFT, AIC.PGWGH)
+AICs
+which.min(AICs)
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+######################################################################
+# KL Divergence criterion
+######################################################################
+# KL Divergence
+dKL <- minKL(MLE.PGWGH[1:3], c(1,1))$min.KL
+dKL
+
+# Redundancy constant
+k = length(MLE.PGWGH)
+M = 0.05
+ne <- n - 0.5*sum(!status)
+
+UKL <- 0.5*k*M*length(MLE.PGWGH)*log(ne)/ne
+
+# Test
+(dKL < UKL)
+
+
+
+######################################################################
+# Hellinger distance criterion
+######################################################################
+
+# Hellinger Distance
+DH <- minHell(MLE.PGWGH[1:3], c(1,1))$min.dHell
+DH
+
+# Hellinger criterion
+kappa <- 0.05
+UH <- log( 1 - (1-2*kappa)^2)/(2*log(1-DH^2))
+
+# Test
+(ne < UH)
+
+
+######################################################################
+# Hessian Method
+######################################################################
+
+# Hessian/Eigenvalues
+HESS.PGW  <- -hessian(OPTPGWGH$log_lik, x = OPTPGWGH$OPT$par)
+  
+eigen.val <- eigen(HESS.PGW)$values
+
+ref.val <- abs(as.vector(eigen.val))/max(abs(as.vector(eigen.val)))
+
+sev <- sort(ref.val)
+
+sev
+
+# Upper bound
+Un <- 0.001
+
+# Test
+(sev[1] < Un)
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+#######################################################################################
+# Bootstrap
+#######################################################################################
+
+# Number of Boostrap samples 
+B <- 1000
+
+# Bootstrap MLEs
+MLE.B <- matrix(0, ncol = length(MLE.PGWGH), nrow = B)
+neB <- UKLB <- UHB <- DHB<- DKLB <- vector()
+indHess <- vector()
+
+for(i in 1:B){
+  ind <- sample(1:n, replace = T)
+  OPTB <- GHMLE(init = c(0,0,0, rep(0, ncol(xt)), rep(0,ncol(x))), times = times[ind], status = status[ind], 
+           hstr = "GH", dist = "PGW", des = x[ind,], des_t = xt[ind,], method = "nlminb", maxit = 10000)
+  MLE.B[i,] <- c(exp(OPTB$OPT$par[1:3]), OPTB$OPT$par[-c(1:3)])
+  neB[i] <- n - 0.5*sum(!status[ind])
+  
+  UKLB[i] <- 0.5*k*M*length(MLE.B[i,])*log(neB[i])/neB[i]
+  
+  # Hessian/Eigenvalues
+  HESSB  <- -hessian(OPTB$log_lik, x = OPTB$OPT$par)
+  
+  eigen.val <- eigen(HESSB)$values
+  
+  ref.val <- abs(as.vector(eigen.val))/max(abs(as.vector(eigen.val)))
+  
+  sev <- sort(ref.val)
+  
+  # Test
+  indHess[i] <- as.numeric(sev[1] < Un)
+}
+
+
+######################################################################
+# Bootstrap KL Divergence criterion
+######################################################################
+
+# Bootstrap KL Divergence
+
+for(i in 1:B){
+    if(MLE.B[i,3] < 0.01) DKLB[i] <- NA
+    if(MLE.B[i,3] >= 0.01) DKLB[i] <- minKL(MLE.B[i,1:3], c(1,1))$min.KL
+}
+
+# Bootstrap probability of KL divergence criterion
+
+indKLB <- (DKLB < UKLB) 
+
+mean(indKLB, na.rm = TRUE)
+
+
+
+
+######################################################################
+# Bootstrap Hellinger distance criterion
+######################################################################
+
+# Hellinger Distance
+for(i in 1:B){
+DHB[i] <- minHell(MLE.B[i,1:3], c(1,1))$min.dHell
+
+# Hellinger criterion
+UHB[i] <- log( 1 - (1-2*kappa)^2)/(2*log(1-DHB[i]^2))
+}
+
+# Bootstrap probability of Hellinger distance criterion
+indHB <- (neB < UHB)
+
+mean(indHB)
+
+######################################################################
+# Bootstrap Hessian method
+######################################################################
+
+
+# Bootstrap probability of KL divergence criterion
+
+mean(indHess) 
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+#######################################################################################
+# Profile likelihood
+#######################################################################################
+p0 <- ncol(xt)
+p1 <- ncol(x)
+
+p <- length(MLE.PGWGH) # number of parameters
+ML <- OPTPGWGH$OPT$objective # Maximum likelihood
+
+
+# Profile likelihood function for parameter "ind"
+prof.lik <- function(par1, ind){
+  
+  tempf <- function(par){
+    tempv <- rep(0,p)
+    tempv <- replace(x = tempv, c(1:p)[-ind] , par)
+    tempv <- replace(x = tempv, ind , par1)
+    out0 <- OPTPGWGH$log_lik(tempv)
+    return(out0)
+  } 
+  
+  out <-  -nlminb(OPTPGWGH$OPT$par[-ind]*0,tempf, control = list(iter.max = 10000))$objective + ML
+
+  out2 <- ifelse(exp(out)<=1, exp(out), 0)
+  return(out2)
+}
+
+
+# Profile likelihoods
+
+# Profile likelihood of Parameter 1
+prof1 <- Vectorize(function(par) prof.lik(log(par),1))
+curve(prof1,0.01,7 , n = 500, lwd = 2, xlab = expression(sigma), ylab = "Profile Likelihood")
+
+# Profile likelihood of Parameter 2
+prof2 <- Vectorize(function(par) prof.lik(log(par),2))
+curve(prof2,0.8,2 , n = 500, lwd = 2, xlab = expression(nu), ylab = "Profile Likelihood")
+
+# Profile likelihood of Parameter 3
+prof3 <- Vectorize(function(par) prof.lik(log(par),3))
+curve(prof3,0.25,2.5 , n = 200, lwd = 2, xlab = expression(gamma), ylab = "Profile Likelihood")
+
+# Profile likelihood of Parameter 4
+prof4 <- Vectorize(function(par) prof.lik(par,4))
+curve(prof4,-5,5, n = 500, lwd = 2, xlab = expression(alpha[1]), ylab = "Profile Likelihood", 
+      ylim = c(0,1))
+
+# Profile likelihood of Parameter 5
+prof5 <- Vectorize(function(par) prof.lik(par,5))
+curve(prof5,-2,2 , n = 200, lwd = 2, xlab = expression(beta[1]), ylab = "Profile Likelihood",
+      ylim = c(0,1))
+
+
+# Profile likelihood of Parameter 6
+prof6 <- Vectorize(function(par) prof.lik(par,6))
+curve(prof6,-1.1, -0.1 , n = 200, lwd = 2, xlab = expression(beta[2]), ylab = "Profile Likelihood")
+
+# Profile likelihood of Parameter 7
+prof7 <- Vectorize(function(par) prof.lik(par,7))
+curve(prof7,0,0.65, n = 200, lwd = 2, xlab = expression(beta[3]), ylab = "Profile Likelihood")
+
+
+
+## ----------------------------------------------------------------------------------------------------------------------------
+
+################################################
+# Exponentiated Weibull model
+################################################
+
+
+# Exponentiated Weibull
+
+OPTEWGH <- GHMLE(init = OPTPGWGH$OPT$par*0.1, times = times, status = status, 
+                 hstr = "GH", dist = "EW", des = x, des_t = xt, method = "nlminb", maxit = 10000)
+
+# MLE EW-GH structure
+MLE.EWGH <- c(exp(OPTEWGH$OPT$par[1:3]), OPTEWGH$OPT$par[-c(1:3)])
+kable(MLE.EWGH, digits = 3)
+AIC.EWGH <- 2*OPTEWGH$OPT$objective + 2*length(MLE.EWGH)
+AIC.EWGH
+
+################################################
+# Weibull models (Simpler identifiable model)
+################################################
+
+# Optimisation
+OPTW0 <- GHMLE(init = c(0,0), times = times, status = status, 
+          hstr = "baseline", dist = "Weibull", method = "nlminb", maxit = 10000)
+
+OPTWPH <- GHMLE(init = c(OPTW0$OPT$par*0, rep(0,ncol(x))), times = times, status = status, 
+       hstr = "PH", dist = "Weibull", des = x, method = "nlminb", maxit = 10000)
+
+OPTWAFT <- GHMLE(init = c(OPTW0$OPT$par*0,rep(0,ncol(x))), times = times, status = status, 
+     hstr = "AFT", dist = "Weibull", des = x, method = "nlminb", maxit = 10000)
+
+# MLE W no covariates
+MLE.W0 <- exp(OPTW0$OPT$par[1:2])
+kable(MLE.W0, digits = 3)
+
+# MLE W-PH structure
+MLE.WPH <- c(exp(OPTWPH$OPT$par[1:2]), OPTWPH$OPT$par[-c(1:2)])
+kable(MLE.WPH, digits = 3)
+
+# MLE W-AFT structure
+MLE.WAFT <- c(exp(OPTWAFT$OPT$par[1:2]), OPTWAFT$OPT$par[-c(1:2)])
+kable(MLE.WAFT, digits = 3)
+
+# AIC
+AIC.W0 <- 2*OPTW0$OPT$objective + 2*length(MLE.W0)
+AIC.WAFT <- 2*OPTWAFT$OPT$objective + 2*length(MLE.WAFT)
+AIC.WPH <- 2*OPTWPH$OPT$objective + 2*length(MLE.WPH)
+
+# Best model: AFT-W
+c(AIC.W0, AIC.WPH, AIC.WAFT)
+
