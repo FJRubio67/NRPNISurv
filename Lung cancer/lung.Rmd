@@ -14,6 +14,8 @@ This document presents an analysis of Near Redundancy and Practical non-identifi
 
 See the GitHub repository: [Near Redundancy and Practical non-identifiability: Survival Models](https://github.com/FJRubio67/NRPNISurv)
 
+**Acknolewdgement**: We thank Mr. Ching Choy for pointing out a bug in the bootstrap for the Hessian method. This bug produced a classification probability $\approx 1$, while the correct value is $\approx 0.7$, as shown in the section "Bootstrap for distance-based criteria and Hessian method''. The conclusions are similar for the new corrected values, but it is now clear that the Hessian method has a lower power in detecting inferential problems than that of the *ad hoc* distance-based methods, as expected. 
+
 # Data preparation
 ```{r}
 ########################################################################
