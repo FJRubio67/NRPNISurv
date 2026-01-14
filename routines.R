@@ -64,7 +64,7 @@ minHell <- function(par, initW){
       nu0 <- exp(parW[2])
       # Distance between W and PGW
       integrand <- Vectorize(function(t) ( sqrt(dpgw(t, par[1], par[2], par[3]))  - 
-                                             sqrt(dweibull(t, sigma0, nu0) )  )^2)
+                                             sqrt(dweibull(t, scale = sigma0, shape = nu0) )  )^2)
       val <- sqrt( 0.5*integrate(integrand, 0, Inf, subdivisions = 10000)$value ) # Consider controlling the error
       return(val)
     }
